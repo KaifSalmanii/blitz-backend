@@ -85,31 +85,4 @@ async def download_file(message_id: int):
         
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
-    await bot.stop()
-
-@app.get("/")
-def home():
-    return {"message": "🚀 Blitz Backend is Running!"}
-
-@app.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
-    try:
-        # Video ko server par temporarily save karna
-        file_location = f"temp_{file.filename}"
-        with open(file_location, "wb") as f:
-            f.write(await file.read())
-
-        # Telegram par upload karna (Pyrogram ki power se)
-        await bot.send_video(
-            chat_id=int(CHAT_ID),
-            video=file_location,
-            caption=f"🎥 Uploaded via Blitz Web: {file.filename}"
-        )
         
-        # Upload hone ke baad server se delete kar dena taaki memory full na ho
-        os.remove(file_location)
-        
-        return {"status": "success", "message": "✅ Video Telegram par chali gayi!"}
-    
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
