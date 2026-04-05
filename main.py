@@ -1,88 +1,106 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pyrogram import Client
 import os
 import tempfile
+import asyncio
 
-# Keys Render se automatically uthayega
-api_id = int(os.environ.get("API_ID"))
-api_hash = os.environ.get("API_HASH")
-bot_token = os.environ.get("BOT_TOKEN")
-channel_id = int(os.environ.get("CHANNEL_ID"))
+# Environment Variables
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 app = FastAPI()
 
-# Frontend ko connect hone ki permission dena
+# 🔥 CORS SETTINGS - Iske bina website connect nahi hogi 🔥
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Sabhi websites ko allow karein
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-bot = Client("blitz_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+# Bot Client Setup
+bot = Client(
+    "blitz_vault_bot",
+    api_id=int(API_ID) if API_ID else 0,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
 @app.on_event("startup")
 async def startup():
-    await bot.start()
+    if not bot.is_connected:
+        await bot.start()
 
 @app.on_event("shutdown")
 async def shutdown():
-    await bot.stop()
+    if bot.is_connected:
+        await bot.stop()
 
 @app.get("/")
-def home():
-    return {"message": "🚀 BlitzVault Engine is Running!"}
+async def root():
+    return {"status": "online", "message": "🚀 BlitzVault Engine is Running!"}
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...)):
     try:
-        # File ko temporarily server par save karna
+        # 1. File ko temporarily save karein
         with tempfile.NamedTemporaryFile(delete=False) as temp:
             content = await file.read()
             temp.write(content)
             temp_path = temp.name
         
-        # File ko Telegram Channel (Vault) mein bhejna
-        msg = await bot.send_document(
-            chat_id=channel_id,
+        # 2. Telegram par bhejein
+        sent_msg = await bot.send_document(
+            chat_id=int(CHANNEL_ID),
             document=temp_path,
-            file_name=file.filename
+            file_name=file.filename,
+            caption=f"Uploaded from BlitzVault\nFile: {file.filename}"
         )
-        os.remove(temp_path) # Temp file delete karna (Storage bachane ke liye)
         
-        # Link Generate karna
-        file_id = msg.id
-        download_link = f"https://blitz-backend-gxu4.onrender.com/download/{file_id}"
+        # 3. Temp file delete karein
+        os.remove(temp_path)
         
-        return {"status": "success", "message": "Uploaded to Vault!", "link": download_link}
-    
+        # 4. Download Link banayein
+        # Yahan apna Render wala asli URL check kar lena
+        download_url = f"https://blitz-backend-gxu4.onrender.com/download/{sent_msg.id}"
+        
+        return {
+            "status": "success",
+            "link": download_url,
+            "file_id": sent_msg.id
+        }
+
     except Exception as e:
+        print(f"Error: {str(e)}")
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
-@app.get("/download/{message_id}")
-async def download_file(message_id: int):
+@app.get("/download/{msg_id}")
+async def download_video(msg_id: int):
     try:
-        # Telegram Channel se file dhoondhna
-        msg = await bot.get_messages(chat_id=channel_id, message_ids=message_id)
-        if not msg or (not msg.document and not msg.video):
-            return {"error": "File not found or deleted from vault."}
+        msg = await bot.get_messages(chat_id=int(CHANNEL_ID), message_ids=msg_id)
         
-        # File ka naam pata lagana
-        file_name = msg.document.file_name if msg.document else "blitzvault_video.mp4"
+        if not msg or not (msg.document or msg.video):
+            raise HTTPException(status_code=404, detail="File not found in Vault")
 
-        # File ko seedha browser mein stream karna (chunk by chunk)
-        async def file_generator():
+        file_name = msg.document.file_name if msg.document else "video.mp4"
+
+        async def stream_file():
             async for chunk in bot.stream_media(msg):
                 yield chunk
 
-        headers = {
-            "Content-Disposition": f'attachment; filename="{file_name}"'
-        }
-        return StreamingResponse(file_generator(), media_type="application/octet-stream", headers=headers)
-        
+        return StreamingResponse(
+            stream_file(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{file_name}"'}
+        )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
-        
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=10000)
