@@ -30,7 +30,6 @@ class FolderReq(BaseModel): session_string: str; folder_id: str
 @app.get("/")
 def home(): return {"message": "🚀 UnlimGram Pro Engine Live!"}
 
-# --- AUTH ---
 @app.post("/send-otp")
 async def send_otp(req: PhoneReq):
     try:
@@ -53,13 +52,11 @@ async def verify_otp(req: OTPReq):
         return {"session_string": session_str}
     except Exception as e: raise HTTPException(status_code=400, detail=str(e))
 
-# --- FOLDERS (With Secret Filter) ---
 @app.post("/create-folder")
 async def create_folder(req: ActionReq):
     try:
         client = Client("user", session_string=req.session_string, in_memory=True)
         await client.connect()
-        # '\u200b' ek zero-width space hai. Yeh UI mein nahi dikhega par backend pehchan lega
         chat = await client.create_channel(title=req.folder_name + "\u200b", description="UnlimGram Vault")
         await client.disconnect()
         return {"status": "success", "folder_id": str(chat.id), "folder_name": req.folder_name}
@@ -72,7 +69,6 @@ async def get_folders(req: ActionReq):
         await client.connect()
         folders = []
         async for dialog in client.get_dialogs():
-            # Sirf wo channel uthayega jiske aakhir mein hamara secret code hai
             if dialog.chat.type == ChatType.CHANNEL and dialog.chat.is_creator:
                 if dialog.chat.title and dialog.chat.title.endswith("\u200b"):
                     clean_name = dialog.chat.title.replace("\u200b", "")
@@ -81,7 +77,6 @@ async def get_folders(req: ActionReq):
         return {"folders": folders}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
-# --- FILES & STREAMING ---
 @app.post("/get-files")
 async def get_files(req: FolderReq):
     try:
@@ -90,11 +85,9 @@ async def get_files(req: FolderReq):
         target = int(req.folder_id) if req.folder_id != "root" else "me"
         
         files = []
-        async for msg in client.get_chat_history(target, limit=50): # Last 50 files
+        async for msg in client.get_chat_history(target, limit=50): 
             if msg.document or msg.video or msg.photo or msg.audio:
                 media = msg.document or msg.video or msg.photo or msg.audio
-                
-                # Metadata nikalna
                 is_photo = True if msg.photo else False
                 file_name = getattr(media, "file_name", f"Image_{msg.id}.jpg" if is_photo else f"File_{msg.id}")
                 mime = getattr(media, "mime_type", "image/jpeg" if is_photo else "unknown")
@@ -110,7 +103,6 @@ async def get_files(req: FolderReq):
 
 @app.get("/stream")
 async def stream_media(session: str, folder_id: str, msg_id: int):
-    # Yeh API video aur images ko direct website par play karegi
     client = Client("streamer", session_string=session, in_memory=True)
     await client.connect()
     target = int(folder_id) if folder_id != "root" else "me"
@@ -123,21 +115,33 @@ async def stream_media(session: str, folder_id: str, msg_id: int):
 
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
+
+# 🔥 MAGIC HAPPENS HERE: Optimized Upload Route 🔥
 @app.post("/upload")
 async def upload_file(session_string: str = Form(...), folder_id: str = Form(...), file: UploadFile = File(...)):
     try:
         client = Client("user", session_string=session_string, in_memory=True)
         await client.connect()
+        
+        # 1. Chunking: 1-1 MB karke file read hogi taaki RAM crash na ho
         with tempfile.NamedTemporaryFile(delete=False) as temp:
-            temp.write(await file.read())
+            while chunk := await file.read(1024 * 1024):  
+                temp.write(chunk)
             temp_path = temp.name
             
+        # Target dhoondhna
         target_chat = int(folder_id) if folder_id != "root" else "me"
+        
+        # 2. Telegram par bhejna
         await client.send_document(chat_id=target_chat, document=temp_path, file_name=file.filename)
+        
+        # 3. Kachra saaf karna
         os.remove(temp_path)
         await client.disconnect()
-        return {"status": "success"}
+        return {"status": "success", "message": "File Uploaded to Telegram!"}
+        
     except Exception as e:
+        print(f"🔥 BACKEND UPLOAD ERROR: {str(e)}") # Render logs me error print hoga
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
