@@ -55,7 +55,8 @@ async def verify_otp(req: OTPReq):
 @app.post("/create-folder")
 async def create_folder(req: ActionReq):
     try:
-        client = Client("user", session_string=req.session_string, in_memory=True)
+        # ⚠️ YAHAN API_ID aur HASH ADD KIYA
+        client = Client("user", api_id=int(API_ID), api_hash=API_HASH, session_string=req.session_string, in_memory=True)
         await client.connect()
         chat = await client.create_channel(title=req.folder_name + "\u200b", description="UnlimGram Vault")
         await client.disconnect()
@@ -65,7 +66,7 @@ async def create_folder(req: ActionReq):
 @app.post("/get-folders")
 async def get_folders(req: ActionReq):
     try:
-        client = Client("user", session_string=req.session_string, in_memory=True)
+        client = Client("user", api_id=int(API_ID), api_hash=API_HASH, session_string=req.session_string, in_memory=True)
         await client.connect()
         folders = []
         async for dialog in client.get_dialogs():
@@ -80,7 +81,7 @@ async def get_folders(req: ActionReq):
 @app.post("/get-files")
 async def get_files(req: FolderReq):
     try:
-        client = Client("user", session_string=req.session_string, in_memory=True)
+        client = Client("user", api_id=int(API_ID), api_hash=API_HASH, session_string=req.session_string, in_memory=True)
         await client.connect()
         target = int(req.folder_id) if req.folder_id != "root" else "me"
         
@@ -103,7 +104,7 @@ async def get_files(req: FolderReq):
 
 @app.get("/stream")
 async def stream_media(session: str, folder_id: str, msg_id: int):
-    client = Client("streamer", session_string=session, in_memory=True)
+    client = Client("streamer", api_id=int(API_ID), api_hash=API_HASH, session_string=session, in_memory=True)
     await client.connect()
     target = int(folder_id) if folder_id != "root" else "me"
     msg = await client.get_messages(target, msg_id)
@@ -116,33 +117,36 @@ async def stream_media(session: str, folder_id: str, msg_id: int):
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
 
-# 🔥 MAGIC HAPPENS HERE: Optimized Upload Route 🔥
+# 🔥 UPLOAD BUG FIX 🔥
 @app.post("/upload")
 async def upload_file(session_string: str = Form(...), folder_id: str = Form(...), file: UploadFile = File(...)):
     try:
-        client = Client("user", session_string=session_string, in_memory=True)
+        # Client connect with full credentials
+        client = Client("uploader", api_id=int(API_ID), api_hash=API_HASH, session_string=session_string, in_memory=True)
         await client.connect()
         
-        # 1. Chunking: 1-1 MB karke file read hogi taaki RAM crash na ho
-        with tempfile.NamedTemporaryFile(delete=False) as temp:
-            while chunk := await file.read(1024 * 1024):  
-                temp.write(chunk)
+        # Temp file processing fix (Flush zaroori hai)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as temp:
+            content = await file.read()
+            temp.write(content)
+            temp.flush() # Memory se file me save karne ke liye
             temp_path = temp.name
             
-        # Target dhoondhna
+        # Target chat logic
         target_chat = int(folder_id) if folder_id != "root" else "me"
+        filename = file.filename or "uploaded_file"
         
-        # 2. Telegram par bhejna
-        await client.send_document(chat_id=target_chat, document=temp_path, file_name=file.filename)
+        # Uploading to telegram
+        await client.send_document(chat_id=target_chat, document=temp_path, file_name=filename)
         
-        # 3. Kachra saaf karna
+        # Cleanup
         os.remove(temp_path)
         await client.disconnect()
         return {"status": "success", "message": "File Uploaded to Telegram!"}
         
     except Exception as e:
-        print(f"🔥 BACKEND UPLOAD ERROR: {str(e)}") # Render logs me error print hoga
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"🔥 UPLOAD ERROR: {str(e)}") # Render ke kaale logs me error dikhega
+        raise HTTPException(status_code=500, detail=f"Upload Failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
