@@ -28,7 +28,8 @@ class ActionReq(BaseModel): session_string: str; folder_name: str = ""
 class FolderReq(BaseModel): session_string: str; folder_id: str
 
 @app.get("/")
-def home(): return {"message": "🚀 UnlimGram Pro Engine Live!"}
+def home(): 
+    return {"message": "🚀 UnlimGram Pro Engine Live!"}
 
 @app.post("/send-otp")
 async def send_otp(req: PhoneReq):
@@ -38,7 +39,8 @@ async def send_otp(req: PhoneReq):
         code = await client.send_code(req.phone_number)
         login_sessions[req.phone_number] = {"hash": code.phone_code_hash, "client": client}
         return {"status": "success"}
-    except Exception as e: raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e: 
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/verify-otp")
 async def verify_otp(req: OTPReq):
@@ -50,18 +52,19 @@ async def verify_otp(req: OTPReq):
         await data["client"].disconnect()
         del login_sessions[req.phone_number]
         return {"session_string": session_str}
-    except Exception as e: raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e: 
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/create-folder")
 async def create_folder(req: ActionReq):
     try:
-        # ⚠️ YAHAN API_ID aur HASH ADD KIYA
         client = Client("user", api_id=int(API_ID), api_hash=API_HASH, session_string=req.session_string, in_memory=True)
         await client.connect()
         chat = await client.create_channel(title=req.folder_name + "\u200b", description="UnlimGram Vault")
         await client.disconnect()
         return {"status": "success", "folder_id": str(chat.id), "folder_name": req.folder_name}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get-folders")
 async def get_folders(req: ActionReq):
@@ -76,7 +79,8 @@ async def get_folders(req: ActionReq):
                     folders.append({"id": str(dialog.chat.id), "name": clean_name})
         await client.disconnect()
         return {"folders": folders}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get-files")
 async def get_files(req: FolderReq):
@@ -100,7 +104,8 @@ async def get_files(req: FolderReq):
         
         await client.disconnect()
         return {"files": files}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/stream")
 async def stream_media(session: str, folder_id: str, msg_id: int):
@@ -117,7 +122,7 @@ async def stream_media(session: str, folder_id: str, msg_id: int):
     return StreamingResponse(generate(), media_type="application/octet-stream")
 
 
-# 🔥 UPLOAD BUG FIX 🔥
+# 🔥 UPLOAD BUG FIX (is_premium Error Solved) 🔥
 @app.post("/upload")
 async def upload_file(session_string: str = Form(...), folder_id: str = Form(...), file: UploadFile = File(...)):
     try:
@@ -125,7 +130,10 @@ async def upload_file(session_string: str = Form(...), folder_id: str = Form(...
         client = Client("uploader", api_id=int(API_ID), api_hash=API_HASH, session_string=session_string, in_memory=True)
         await client.connect()
         
-        # Temp file processing fix (Flush zaroori hai)
+        # 🔥 THE FIX: Yeh line server ko batayegi ki current user kaun hai
+        await client.get_me()
+        
+        # Temp file processing
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as temp:
             content = await file.read()
             temp.write(content)
@@ -145,8 +153,9 @@ async def upload_file(session_string: str = Form(...), folder_id: str = Form(...
         return {"status": "success", "message": "File Uploaded to Telegram!"}
         
     except Exception as e:
-        print(f"🔥 UPLOAD ERROR: {str(e)}") # Render ke kaale logs me error dikhega
-        raise HTTPException(status_code=500, detail=f"Upload Failed: {str(e)}")
+        print(f"🔥 UPLOAD ERROR: {str(e)}") 
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
