@@ -1,16 +1,16 @@
 import os
-import tempfile
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pyrogram import Client
-from pyrogram.enums import ChatType
 
+# Render se API credentials uthayenge
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 
 app = FastAPI()
 
+# CORS Fix taaki frontend website connect ho sake
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,82 +19,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# OTP process ke time data temporarily store karne ke liye
 login_sessions = {}
 
-class PhoneReq(BaseModel): phone_number: str
-class OTPReq(BaseModel): phone_number: str; otp: str
-class ActionReq(BaseModel): session_string: str; folder_name: str = ""
+class PhoneRequest(BaseModel):
+    phone_number: str
+
+class OTPRequest(BaseModel):
+    phone_number: str
+    otp: str
 
 @app.get("/")
-def home(): return {"message": "🚀 UnlimGram REAL Engine is Live!"}
+def home():
+    return {"message": "🚀 UnlimGram Auth Engine is Running!"}
 
-# --- 1. AUTHENTICATION ---
+# Endpoint 1: Phone Number par OTP bhejna
 @app.post("/send-otp")
-async def send_otp(req: PhoneReq):
+async def send_otp(req: PhoneRequest):
+    if not API_ID or not API_HASH:
+        raise HTTPException(status_code=500, detail="Server par API Keys missing hain!")
+        
     try:
+        # In-memory client banayenge (Server ki storage use nahi karenge)
         client = Client(f"temp_{req.phone_number}", api_id=int(API_ID), api_hash=API_HASH, in_memory=True)
         await client.connect()
-        code = await client.send_code(req.phone_number)
-        login_sessions[req.phone_number] = {"hash": code.phone_code_hash, "client": client}
-        return {"status": "success"}
-    except Exception as e: raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/verify-otp")
-async def verify_otp(req: OTPReq):
-    if req.phone_number not in login_sessions: raise HTTPException(status_code=400, detail="Timeout")
-    data = login_sessions[req.phone_number]
-    try:
-        await data["client"].sign_in(req.phone_number, data["hash"], req.otp)
-        session_str = await data["client"].export_session_string()
-        await data["client"].disconnect()
-        del login_sessions[req.phone_number]
-        return {"session_string": session_str}
-    except Exception as e: raise HTTPException(status_code=400, detail=str(e))
-
-# --- 2. REAL FOLDER MANAGEMENT (Channels) ---
-@app.post("/create-folder")
-async def create_folder(req: ActionReq):
-    try:
-        # User ke session se login karna
-        client = Client("user", session_string=req.session_string, in_memory=True)
-        await client.connect()
-        # Telegram par private channel banana
-        chat = await client.create_channel(title=req.folder_name, description="Created via UnlimGram")
-        await client.disconnect()
-        return {"status": "success", "folder_id": chat.id, "folder_name": chat.title}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/get-folders")
-async def get_folders(req: ActionReq):
-    try:
-        client = Client("user", session_string=req.session_string, in_memory=True)
-        await client.connect()
-        folders = []
-        # User ke saare private channels dhoondhna jo usne banaye hain
-        async for dialog in client.get_dialogs():
-            if dialog.chat.type == ChatType.CHANNEL and dialog.chat.is_creator:
-                folders.append({"id": dialog.chat.id, "name": dialog.chat.title})
-        await client.disconnect()
-        return {"folders": folders}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-# --- 3. REAL FILE UPLOAD ---
-@app.post("/upload")
-async def upload_file(session_string: str = Form(...), folder_id: str = Form(...), file: UploadFile = File(...)):
-    try:
-        client = Client("user", session_string=session_string, in_memory=True)
-        await client.connect()
         
-        with tempfile.NamedTemporaryFile(delete=False) as temp:
-            temp.write(await file.read())
-            temp_path = temp.name
-            
-        # Target folder (channel) mein upload karna. Agar folder_id "root" hai, toh Saved Messages mein.
-        target_chat = int(folder_id) if folder_id != "root" else "me"
+        # Telegram se OTP send karne ko bolenge
+        sent_code = await client.send_code(req.phone_number)
         
-        await client.send_document(chat_id=target_chat, document=temp_path, file_name=file.filename)
-        os.remove(temp_path)
-        await client.disconnect()
-        return {"status": "success", "message": "File Uploaded to Telegram!"}
+        # Hash aur Client ko save kar lenge taaki verify karte time kaam aaye
+        login_sessions[req.phone_number] = {
+            "hash": sent_code.phone_code_hash,
+            "client": client
+        }
+        return {"status": "success", "message": "OTP Sent Successfully!"}
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Telegram Error: {str(e)}")
+
+# Endpoint 2: OTP Verify karna aur Session String generate karna
+@app.post("/verify-otp")
+async def verify_otp(req: OTPRequest):
+    if req.phone_number not in login_sessions:
+        raise HTTPException(status_code=400, detail="Time out ya invalid number. Wapas try karein.")
+        
+    session_data = login_sessions[req.phone_number]
+    client = session_data["client"]
+    phone_code_hash = session_data["hash"]
+    
+    try:
+        # OTP verify karke user ko login karwana
+        await client.sign_in(req.phone_number, phone_code_hash, req.otp)
+        
+        # 🌟 MAGIC: User ka "Session String" nikalna 🌟
+        session_string = await client.export_session_string()
+        await client.disconnect()
+        
+        # Temporary data delete karna (Security ke liye)
+        del login_sessions[req.phone_number]
+        
+        return {"status": "success", "session_string": session_string}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OTP ya Error: {str(e)}")
